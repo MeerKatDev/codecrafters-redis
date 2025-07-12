@@ -1,6 +1,7 @@
 #![allow(unused_imports)]
-use std::net::TcpListener;
+use std::net::{TcpStream, TcpListener};
 use std::io::{Read, Write};
+use std::thread;
 
 fn main() {
     // You can use print statements as follows for debugging, they'll be visible when running tests.
@@ -12,24 +13,31 @@ fn main() {
     
     for stream in listener.incoming() {
         match stream {
-            Ok(mut stream) => {
+            Ok(stream) => {
                 println!("accepted new connection");
 
-                let mut buf = [0; 128];
-
-                while let Ok(read_count) = stream.read(&mut buf) {
-                    if read_count == 0 {
-                        break;
-                    }
-
-                    println!("Received: {:?}", std::str::from_utf8(&buf[..read_count]));
-                    
-                    stream.write_all(b"+PONG\r\n").unwrap();
-                }
+                thread::spawn(move || {
+                    handle_connection(stream)
+                });
             }
             Err(e) => {
                 println!("error: {}", e);
             }
         }
+    }
+}
+
+
+fn handle_connection(mut stream: TcpStream) {
+    let mut buf = [0; 128];
+
+    while let Ok(read_count) = stream.read(&mut buf) {
+        if read_count == 0 {
+            break;
+        }
+
+        println!("Received: {:?}", std::str::from_utf8(&buf[..read_count]));
+        
+        stream.write_all(b"+PONG\r\n").unwrap();
     }
 }
