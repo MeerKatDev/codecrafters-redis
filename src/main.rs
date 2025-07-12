@@ -29,14 +29,12 @@ fn main() {
 
 
 fn handle_connection(mut stream: TcpStream) {
-    let mut buf = [0; 128];
+    let mut byte = [0u8; 1];
 
-    while let Ok(read_count) = stream.read(&mut buf) {
-        if read_count == 0 {
-            break;
-        }
+    while let Ok(()) = stream.read_exact(&mut byte) {
+        let b = byte[0];
 
-        println!("Received: {:?}", std::str::from_utf8(&buf[..read_count]));
+        println!("Got byte: {}", b as char);
         
         stream.write_all(b"+PONG\r\n").unwrap();
     }
