@@ -30,12 +30,49 @@ fn main() {
 
 fn handle_connection(mut stream: TcpStream) {
     let mut byte = [0u8; 1];
+    // max of 64 bytes words
+    let mut idx: usize = 0;
+    const ACC_LEN: usize = 32;
+    let mut echo_flag: bool = false;
+    let mut accumulator = [0u8; ACC_LEN];
 
     while let Ok(()) = stream.read_exact(&mut byte) {
-        let b = byte[0];
+        // simply accumulate and deal with overflow
+        if idx < accumulator.len() {
+            accumulator[idx] = byte[0];
+            idx += 1;
+        } else {
+            panic!("Buffer full, instructions too large!");
+        }
 
-        println!("Got byte: {}", b as char);
-        
-        stream.write_all(b"+PONG\r\n").unwrap();
+        // read the instruction
+        if accumulator[..idx].ends_with(b"\r\n") {
+            // we have a full instruction!
+            let msg: &[u8] = &accumulator[..idx];
+
+            if msg.starts_with(b"$") {
+                println!("Ignoring lengths for the time being");
+            } else {
+                match msg {
+                    b"PING\r\n" => {
+                        stream.write_all(b"+PONG\r\n").unwrap();
+                    }
+                    b"ECHO\r\n" => {
+                        echo_flag = true;
+                    }
+                    val if echo_flag => {
+                        stream.write_all(b"+").unwrap();
+                        stream.write_all(val).unwrap();
+                        echo_flag = false;
+                    }
+                    other => {
+                        println!("Unhandled for the moment: {:?}", other);
+                    }
+                }
+            }
+            
+            accumulator.fill(0);
+            idx = 0;
+        }
     }
 }
