@@ -1,5 +1,6 @@
 #![allow(unused_imports)]
 use std::collections::HashMap;
+use std::env;
 use std::io::{BufRead, BufReader};
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
@@ -11,18 +12,23 @@ mod redis_instruction;
 use crate::redis_instruction::{ExpiryMsg, Instruction, Storage};
 
 fn main() {
+  let config = Arc::new(Mutex::new(get_config()));
+
   let listener = TcpListener::bind("127.0.0.1:6379").unwrap();
-  let store = Arc::new(Mutex::new(HashMap::new()));
+  // let mut storage_map: Storage = HashMap::new();
+  // storage_map.insert("config".to_owned(), config);
+  let storage = Arc::new(Mutex::new(HashMap::new()));
   let (tx, rx) = mpsc::channel();
-  spawn_expiry_handler(Arc::clone(&store), rx);
+  spawn_expiry_handler(Arc::clone(&storage), rx);
 
   for stream in listener.incoming() {
     match stream {
       Ok(stream) => {
         println!("accepted new connection");
-        let store = Arc::clone(&store);
         let tx_clone = tx.clone();
-        thread::spawn(move || handle_connection(stream, store, tx_clone));
+        let config_clone = Arc::clone(&config);
+        let storage_clone = Arc::clone(&storage);
+        thread::spawn(move || handle_connection(stream, config_clone, storage_clone, tx_clone));
       }
       Err(e) => {
         println!("error: {}", e);
@@ -31,14 +37,27 @@ fn main() {
   }
 }
 
-fn handle_connection(stream: TcpStream, store: Arc<Mutex<Storage>>, tx: mpsc::Sender<ExpiryMsg>) {
-  let mut reader = BufReader::new(stream);
-  let mut instr = Instruction::new(store.clone(), tx);
-
-  let mut line = String::new();
-  while reader.read_line(&mut line).unwrap() > 0 {
+fn handle_connection(
+  mut stream: TcpStream,
+  config: Arc<Mutex<Storage>>,
+  storage: Arc<Mutex<Storage>>,
+  tx: mpsc::Sender<ExpiryMsg>,
+) {
+  // let mut reader = BufReader::new(&mut stream);
+  let mut instr = Instruction::new(config, storage, tx);
+  let mut byte = [0u8; 1];
+  let mut buffer = Vec::new();
+  // while reader.read_line(&mut line).unwrap() > 0 {
+  while stream.read_exact(&mut byte).is_ok() {
+    buffer.push(byte[0]);
     // Trim trailing newline and carriage return
-    let msg = line.trim_end_matches(&['\r', '\n'][..]).to_string();
+    if !buffer.ends_with(b"\r\n") {
+      continue;
+    }
+
+    let msg = String::from_utf8_lossy(&buffer)
+      .trim_end_matches(&['\r', '\n'][..])
+      .to_string();
 
     match msg.chars().next() {
       Some('*') => {
@@ -53,18 +72,40 @@ fn handle_connection(stream: TcpStream, store: Arc<Mutex<Storage>>, tx: mpsc::Se
       }
     }
 
-    reader.get_mut().write_all(&instr.make_response()).unwrap();
+    if instr.is_ready() {
+      stream.write_all(&instr.make_response()).unwrap();
+      instr.clear();
+    }
 
-    line.clear();
+    buffer.clear();
   }
 }
 
-fn spawn_expiry_handler(store: Arc<Mutex<Storage>>, rx: mpsc::Receiver<ExpiryMsg>) {
+fn get_config() -> HashMap<String, String> {
+  let mut args_map = HashMap::new();
+  let mut args = env::args().skip(1);
+
+  while let Some(arg) = args.next() {
+    if arg.starts_with("--") {
+      if let Some(value) = args.next() {
+        args_map.insert(arg.trim_start_matches('-').to_string(), value);
+      } else {
+        eprintln!("Expected value after {}", arg);
+        return Default::default();
+      }
+    } else {
+      eprintln!("Ignoring unexpected argument {}", arg);
+    }
+  }
+  args_map
+}
+
+fn spawn_expiry_handler(storage: Arc<Mutex<Storage>>, rx: mpsc::Receiver<ExpiryMsg>) {
   thread::spawn(move || {
     while let Ok((key, ms)) = rx.recv() {
       thread::sleep(Duration::from_millis(ms));
-      let mut store = store.lock().unwrap();
-      store.remove(&key);
+      let mut storage = storage.lock().unwrap();
+      storage.remove(&key);
       println!("Expired and removed key: {}", key);
     }
   });
