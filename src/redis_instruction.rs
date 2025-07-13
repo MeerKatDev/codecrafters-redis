@@ -12,6 +12,7 @@ pub enum InstructionName {
   Echo,
   Get,
   Set,
+  Config,
 }
 
 impl FromStr for InstructionName {
@@ -19,10 +20,11 @@ impl FromStr for InstructionName {
 
   fn from_str(s: &str) -> Result<Self, Self::Err> {
     match s.trim() {
-      "Ping" => Ok(InstructionName::Ping),
-      "Echo" => Ok(InstructionName::Echo),
-      "Get" => Ok(InstructionName::Get),
-      "Set" => Ok(InstructionName::Set),
+      "PING" => Ok(InstructionName::Ping),
+      "ECHO" => Ok(InstructionName::Echo),
+      "GET" => Ok(InstructionName::Get),
+      "SET" => Ok(InstructionName::Set),
+      "CONFIG" => Ok(InstructionName::Config),
       _ => Err(()),
     }
   }
@@ -47,11 +49,6 @@ impl Instruction {
       storage,
       tx,
     }
-  }
-
-  pub fn save_store_ref(&mut self, storage: Arc<Mutex<Storage>>) -> &mut Self {
-    self.storage = storage;
-    self
   }
 
   pub fn make_response(&mut self) -> Vec<u8> {
@@ -81,6 +78,7 @@ impl Instruction {
 
         b"+OK\r\n".to_vec()
       }
+      InstructionName::Config => b"+OK\r\n".to_vec(),
     }
   }
 

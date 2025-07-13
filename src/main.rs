@@ -1,5 +1,6 @@
 #![allow(unused_imports)]
 use std::collections::HashMap;
+use std::io::{BufRead, BufReader};
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::sync::{mpsc, Arc, Mutex};
@@ -30,51 +31,31 @@ fn main() {
   }
 }
 
-fn handle_connection(
-  mut stream: TcpStream,
-  store: Arc<Mutex<Storage>>,
-  tx: mpsc::Sender<ExpiryMsg>,
-) {
-  let mut byte = [0u8; 1];
-  // max of 64 bytes words
-  let mut idx: usize = 0;
-  const ACC_LEN: usize = 32;
-  let mut accumulator = [0u8; ACC_LEN];
+fn handle_connection(stream: TcpStream, store: Arc<Mutex<Storage>>, tx: mpsc::Sender<ExpiryMsg>) {
+  let mut reader = BufReader::new(stream);
   let mut instr = Instruction::new(store.clone(), tx);
-  instr.save_store_ref(store);
 
-  while let Ok(()) = stream.read_exact(&mut byte) {
-    // simply accumulate and deal with overflow
-    if idx < accumulator.len() {
-      accumulator[idx] = byte[0];
-      idx += 1;
-    } else {
-      panic!("Buffer full, instructions too large!");
-    }
+  let mut line = String::new();
+  while reader.read_line(&mut line).unwrap() > 0 {
+    // Trim trailing newline and carriage return
+    let msg = line.trim_end_matches(&['\r', '\n'][..]).to_string();
 
-    if accumulator[..idx].ends_with(b"\r\n") {
-      let msg = std::str::from_utf8(&accumulator[..idx])
-        .unwrap()
-        .to_string();
-
-      if msg.starts_with("*") {
+    match msg.chars().next() {
+      Some('*') => {
         instr.parse_args_length(&msg);
-      } else if msg.starts_with("$") {
-        println!("Ignore length")
-      } else {
-        println!("Execute {}", msg);
-        if instr.name.is_none() {
-          instr.parse_command(&msg);
-        } else {
-          instr.parse_argument(&msg);
-        }
       }
-
-      stream.write_all(&instr.make_response()).unwrap();
-
-      idx = 0;
-      accumulator.fill(0);
+      Some('$') => { /* Ignore lengths */ }
+      _ if instr.name.is_none() => {
+        instr.parse_command(&msg);
+      }
+      _ => {
+        instr.parse_argument(&msg);
+      }
     }
+
+    reader.get_mut().write_all(&instr.make_response()).unwrap();
+
+    line.clear();
   }
 }
 
